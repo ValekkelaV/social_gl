@@ -89,15 +89,12 @@ create table external_experts (
   created_at timestamptz not null default now()
 );
 
--- Модератор привязан к паре (секция, слот) — т.е. к конкретной строке section_slots
+-- Модератор привязан к паре (секция, слот) — т.е. к конкретной строке section_slots.
+-- Один модератор на section_slot (разные слоты одной секции могут иметь разных
+-- модераторов — это уже покрыто тем, что модератор привязан к section_slot, а не к section).
 create table section_slot_moderators (
-  section_slot_id uuid not null references section_slots(id) on delete cascade,
-  expert_id uuid not null references external_experts(id) on delete cascade,
-  primary key (section_slot_id, expert_id)
-  -- primary key на пару, а не на section_slot_id одиночно: на случай
-  -- со-модерации (два модератора на один слот секции). Если со-модерация
-  -- не нужна и модератор всегда один — можно заменить на unique(section_slot_id)
-  -- и sole primary key (section_slot_id), скажите если так проще.
+  section_slot_id uuid primary key references section_slots(id) on delete cascade,
+  expert_id uuid not null references external_experts(id) on delete cascade
 );
 
 
