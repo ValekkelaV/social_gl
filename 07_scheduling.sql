@@ -21,6 +21,7 @@ create table time_slots (
   label text,               -- опционально, напр. "До обеда"
   starts_at time,
   ends_at time,
+  color text,                -- цвет слота (hex) — используется в других сгенерированных документах (не в программе), задаётся через color-picker
   unique (day_id, sort_order)
 );
 
@@ -37,6 +38,7 @@ create index idx_time_slots_day on time_slots(day_id);
 create table sections (
   id uuid primary key default gen_random_uuid(),
   name text not null,  -- рабочее название темы секции, редактируется организаторами
+  color text,           -- цвет секции для программы.pdf (hex, напр. '#FF5733'); задаётся через color-picker, хранится между генерациями
   created_at timestamptz not null default now()
 );
 
