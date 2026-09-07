@@ -68,7 +68,7 @@ export default function LoginPage() {
       }
       if (!data) return;
 
-      if (data.status === "verified" && data.session_hashed_token) {
+      if (data.token_status === "verified" && data.session_hashed_token) {
         clearInterval(pollRef.current);
         setPhase("exchanging");
 
@@ -84,10 +84,10 @@ export default function LoginPage() {
           return;
         }
         // Успех — AuthContext подхватит новую сессию сам, произойдёт редирект.
-      } else if (data.status === "denied") {
+      } else if (data.token_status === "denied") {
         clearInterval(pollRef.current);
         setPhase("denied");
-      } else if (data.status === "expired") {
+      } else if (data.token_status === "expired") {
         clearInterval(pollRef.current);
         setPhase("expired");
       }
