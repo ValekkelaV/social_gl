@@ -1,20 +1,37 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "./AuthContext";
 import TelegramLoginButton from "./TelegramLoginButton";
 
-// Поток входа:
-// 1. Telegram widget возвращает подписанный payload (id, username, hash, ...).
-// 2. Отправляем его в Edge Function telegram-login (supabase/functions/telegram-login),
-//    которая проверяет подпись + вайтлист и возвращает access/refresh_token.
-// 3. supabase.auth.setSession(...) кладёт токены в клиент — дальше обычная
-//    сессия Supabase Auth, AuthContext подхватит её через onAuthStateChange.
-
 export default function LoginPage() {
   const { session, loading } = useAuth();
   const [status, setStatus] = useState("idle"); // idle | verifying | error
   const [errorMessage, setErrorMessage] = useState("");
+
+  // После редиректа от Telegram данные приходят в query-параметрах текущего
+  // URL (?id=...&hash=...), а не через JS-колбэк, как раньше.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("hash")) return; // обычная загрузка страницы, не редирект от Telegram
+
+    const telegramUser = {
+      id: Number(params.get("id")),
+      first_name: params.get("first_name") || undefined,
+      last_name: params.get("last_name") || undefined,
+      username: params.get("username") || undefined,
+      photo_url: params.get("photo_url") || undefined,
+      auth_date: Number(params.get("auth_date")),
+      hash: params.get("hash"),
+    };
+
+    // Чистим query-параметры из адресной строки сразу — чтобы их нельзя
+    // было случайно переиспользовать повторно и чтобы URL выглядел чисто.
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    handleTelegramAuth(telegramUser);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!loading && session) {
     return <Navigate to="/" replace />;
@@ -48,9 +65,6 @@ export default function LoginPage() {
       });
 
       if (setSessionError) throw setSessionError;
-
-      // Успех — AuthContext сам подхватит новую сессию через onAuthStateChange,
-      // редирект произойдёт автоматически (session станет не-null выше).
     } catch (err) {
       console.error("Ошибка входа через Telegram:", err);
       setStatus("error");
@@ -65,7 +79,7 @@ export default function LoginPage() {
         <p className="text-sm text-gray-600">Вход только для членов оргкомитета, через Telegram.</p>
 
         <div className="flex justify-center">
-          <TelegramLoginButton onAuth={handleTelegramAuth} />
+          <TelegramLoginButton />
         </div>
 
         {status === "verifying" && <p className="text-sm text-gray-500">Проверяем доступ…</p>}
