@@ -98,8 +98,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-4 text-center">
-        <h1 className="text-xl font-semibold">СоцПоляна — админка</h1>
-        <p className="text-sm text-gray-600">Вход только для членов оргкомитета, через Telegram.</p>
+        <h1 className="text-xl font-semibold">Админка «Социальной Поляны»</h1>
 
         {(phase === "idle" || phase === "error") && (
           <button
@@ -112,7 +111,7 @@ export default function LoginPage() {
 
         {phase === "waiting" && (
           <p className="text-sm text-gray-500">
-            Открылся Telegram — нажмите Start в чате с ботом. Ждём подтверждения…
+            Открылся Telegram, ждем подключения (в чате с ботом должно автоматически прописаться /start) 
           </p>
         )}
 
@@ -120,7 +119,7 @@ export default function LoginPage() {
 
         {phase === "denied" && (
           <p className="text-sm text-red-600">
-            Доступ запрещён: ваш Telegram username не в списке оргкомитета.
+            Такого юзернейма нет в списке оргкомитета. Если вы думаете, что это ошибка, напишите в поддержку.
           </p>
         )}
 
