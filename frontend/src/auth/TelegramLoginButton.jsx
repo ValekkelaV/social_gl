@@ -1,15 +1,12 @@
 import { useEffect, useRef } from "react";
 
-// Обёртка над официальным Telegram Login Widget
-// (https://core.telegram.org/widgets/login). Виджет — это <script>,
-// который сам рисует кнопку внутри контейнера и вызывает глобальный
-// callback после успешного логина в Telegram.
-//
-// Требует VITE_TELEGRAM_BOT_USERNAME (без @) в .env — бот должен быть
-// привязан к домену через @BotFather (/setdomain), иначе виджет откажется
-// работать на вашем хостинге.
-
-export default function TelegramLoginButton({ onAuth }) {
+// Редирект-режим вместо popup+callback. В popup-режиме (data-onauth) наш
+// бот почему-то не предлагает мгновенное подтверждение через Telegram
+// Desktop/приложение — только ввод номера телефона. Пробуем режим
+// полноценного редиректа (data-auth-url): Telegram делает полную навигацию
+// на страницу подтверждения, а затем редиректит браузер обратно на наш
+// /login с данными пользователя в query-параметрах.
+export default function TelegramLoginButton() {
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -19,27 +16,20 @@ export default function TelegramLoginButton({ onAuth }) {
       return;
     }
 
-    // Telegram виджет вызывает функцию по глобальному имени, указанному
-    // в data-onauth (без window. и скобок) — регистрируем её на window.
-    window.onTelegramAuth = (telegramUser) => {
-      onAuth(telegramUser);
-    };
-
     const script = document.createElement("script");
     script.src = "https://telegram.org/js/telegram-widget.js?22";
     script.async = true;
     script.setAttribute("data-telegram-login", botUsername);
     script.setAttribute("data-size", "large");
-    script.setAttribute("data-onauth", "onTelegramAuth(user)");
+    script.setAttribute("data-auth-url", window.location.origin + "/login");
 
     const container = containerRef.current;
     container?.appendChild(script);
 
     return () => {
       if (container) container.innerHTML = "";
-      delete window.onTelegramAuth;
     };
-  }, [onAuth]);
+  }, []);
 
   return <div ref={containerRef} />;
 }
