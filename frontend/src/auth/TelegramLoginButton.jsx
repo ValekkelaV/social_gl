@@ -31,7 +31,6 @@ export default function TelegramLoginButton({ onAuth }) {
     script.setAttribute("data-telegram-login", botUsername);
     script.setAttribute("data-size", "large");
     script.setAttribute("data-onauth", "onTelegramAuth(user)");
-    script.setAttribute("data-request-access", "write");
 
     const container = containerRef.current;
     container?.appendChild(script);
