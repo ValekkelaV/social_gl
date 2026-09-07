@@ -18,7 +18,7 @@ export default function NavShell() {
     <div className="min-h-screen flex flex-col">
       <header className="border-b flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-6">
-          <span className="font-semibold">СоцПоляна</span>
+          <span className="font-semibold">Социальная Поляна</span>
           <nav className="flex gap-4">
             {NAV_ITEMS.map((item) => (
               <NavLink
