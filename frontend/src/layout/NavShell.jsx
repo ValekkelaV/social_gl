@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: "/applications", label: "Заявки" },
   { to: "/scheduling", label: "Секции и расписание" },
   { to: "/documents", label: "Документы" },
+  { to: "/committees", label: "Комитеты" },
 ];
 
 export default function NavShell() {
