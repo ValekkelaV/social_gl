@@ -26,7 +26,11 @@ export default function CommitteesPage() {
     const [{ data: committeeRows, error: cErr }, { data: membershipRows, error: mErr }, { data: peopleRows, error: pErr }] =
       await Promise.all([
         supabase.from("committees").select("id, name, archived_at").order("name"),
-        supabase.from("committee_memberships").select("id, person_id, committee_id, level, people(id, full_name, telegram_username)"),
+        supabase
+        .from("committee_memberships")
+        .select(
+          "id, person_id, committee_id, level, people!committee_memberships_person_id_fkey(id, full_name, telegram_username)"
+        ),
         supabase.from("people").select("id, full_name, telegram_username").order("full_name"),
       ]);
 
