@@ -4,6 +4,8 @@ import RequireAuth from "./auth/RequireAuth";
 import LoginPage from "./auth/LoginPage";
 import NavShell from "./layout/NavShell";
 import TicketsPage from "./pages/TicketsPage";
+import TicketDetailPage from "./pages/TicketDetailPage";
+import CreateTicketPage from "./pages/CreateTicketPage";
 import ContentPlanPage from "./pages/ContentPlanPage";
 import ApplicationsPage from "./pages/ApplicationsPage";
 import SchedulingPage from "./pages/SchedulingPage";
@@ -25,6 +27,8 @@ export default function App() {
           >
             <Route index element={<Navigate to="/tickets" replace />} />
             <Route path="/tickets" element={<TicketsPage />} />
+            <Route path="/tickets/new" element={<CreateTicketPage />} />
+            <Route path="/tickets/:id" element={<TicketDetailPage />} />
             <Route path="/content-plan" element={<ContentPlanPage />} />
             <Route path="/applications" element={<ApplicationsPage />} />
             <Route path="/scheduling" element={<SchedulingPage />} />
