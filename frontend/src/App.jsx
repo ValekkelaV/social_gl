@@ -10,6 +10,7 @@ import ContentPlanPage from "./pages/ContentPlanPage";
 import ApplicationsPage from "./pages/ApplicationsPage";
 import SchedulingPage from "./pages/SchedulingPage";
 import DocumentsPage from "./pages/DocumentsPage";
+import CommitteesPage from "./pages/CommitteesPage";
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="/applications" element={<ApplicationsPage />} />
             <Route path="/scheduling" element={<SchedulingPage />} />
             <Route path="/documents" element={<DocumentsPage />} />
+            <Route path="/committees" element={<CommitteesPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
