@@ -27,12 +27,19 @@ export default function ApplicationsPage() {
 // СПИСОК ЗАЯВОК
 // ============================================================
 
+const SORT_OPTIONS = {
+  least_read: "Сначала непрочитанные",
+  section: "По секции (алфавит)",
+  newest: "Сначала новые",
+};
+
 function ApplicationsList() {
   const [applications, setApplications] = useState([]);
   const [readCounts, setReadCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("least_read");
 
   useEffect(() => {
     let isMounted = true;
@@ -63,7 +70,25 @@ function ApplicationsList() {
     };
   }, []);
 
-  const filtered = applications.filter((a) => statusFilter === "all" || a.status === statusFilter);
+  const filtered = applications
+    .filter((a) => statusFilter === "all" || a.status === statusFilter)
+    .slice()
+    .sort((a, b) => {
+      if (sortBy === "least_read") {
+        const diff = (readCounts[a.id] ?? 0) - (readCounts[b.id] ?? 0);
+        if (diff !== 0) return diff;
+        return new Date(b.created_at) - new Date(a.created_at); // tie-break: newest first
+      }
+      if (sortBy === "section") {
+        const sa = (a.desired_section || "").trim();
+        const sb = (b.desired_section || "").trim();
+        if (!sa && sb) return 1; // пустые секции — в конец
+        if (sa && !sb) return -1;
+        return sa.localeCompare(sb, "ru");
+      }
+      // newest
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
 
   return (
     <div className="space-y-4">
@@ -72,6 +97,21 @@ function ApplicationsList() {
         <Link to="/applications/feedback-summary" className="text-sm underline">
           Сводка фидбека перед рассылкой →
         </Link>
+      </div>
+
+      <div className="flex items-center gap-2 text-sm">
+        <label className="text-gray-500">Сортировка:</label>
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="border rounded p-1.5 text-sm"
+        >
+          {Object.entries(SORT_OPTIONS).map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="flex gap-2 text-sm flex-wrap">
@@ -113,6 +153,11 @@ function ApplicationsList() {
                     <div>
                       <div className="font-medium">{a.title || a.proposed_topic || "Без названия"}</div>
                       <div className="text-xs text-gray-500 mt-0.5">{speakerNames || "—"}</div>
+                      {sortBy === "section" && (
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {a.desired_section || "— секция не указана —"}
+                        </div>
+                      )}
                     </div>
                     <div className="text-right shrink-0">
                       <div className="text-xs text-gray-500">{STATUS_LABELS[a.status]}</div>
@@ -302,6 +347,12 @@ function ApplicationDetail() {
               <summary className="cursor-pointer text-gray-400">Текст тезисов (встроенный)</summary>
               <p className="whitespace-pre-wrap mt-1">{app.abstract_text}</p>
             </details>
+          )}
+          {app.abstract_file_has_images && (
+            <p className="text-xs text-amber-600 mt-1">
+              ⚠ В исходном файле есть картинки/схемы — извлечённый текст может быть неполным,
+              стоит открыть оригинал.
+            </p>
           )}
         </div>
 
