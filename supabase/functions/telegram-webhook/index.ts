@@ -133,7 +133,7 @@ serve(async (req: Request) => {
   // 3. Проверка вайтлиста (регистронезависимо).
   const { data: whitelistEntry, error: whitelistError } = await supabaseAdmin
     .from("whitelisted_usernames")
-    .select("username")
+    .select("username, preferred_full_name")
     .ilike("username", telegramUsername)
     .maybeSingle();
 
@@ -186,7 +186,16 @@ serve(async (req: Request) => {
     }
 
     userId = newAuthUser.user.id;
-    const fullName = [from.first_name, from.last_name].filter(Boolean).join(" ") || telegramUsername;
+    // Приоритет: имя из вайтлиста → имя из Telegram → @username. Колонка
+    // preferred_full_name заведена миграцией 18 именно потому, что у части
+    // оргкомитета Telegram-имя набрано латиницей или вообще ником, и в people
+    // попадало не то ФИО. В вайтлисте поле может быть NULL — поэтому цепочка
+    // начинается с ?.trim() и просто проваливается дальше, сохраняя прежнее
+    // поведение для всех, кому имя не проставляли.
+    const fullName =
+      whitelistEntry.preferred_full_name?.trim() ||
+      [from.first_name, from.last_name].filter(Boolean).join(" ") ||
+      telegramUsername;
 
     const { error: insertPersonError } = await supabaseAdmin.from("people").insert({
       id: userId,
