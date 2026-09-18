@@ -91,7 +91,8 @@ create table speakers (
   application_id uuid not null references applications(id) on delete cascade,
 
   full_name text not null,
-  course text,                          -- курс на момент подачи (свободный текст: "3", "магистратура 1" и т.д.)
+  education_level text,                 -- напр. "бакалавриат/специалитет", "аспирантура и выше" — свободный текст, не enum (реальные ответы формы не всегда чистые)
+  course_number text,                    -- напр. "3", "3 курс аспирантуры" — текст, не int: встречаются неоднородные форматы в исходных данных
   university_id uuid references universities(id),
   university_raw text,                  -- как было в исходном CSV, на случай если university_id не сматчен
 

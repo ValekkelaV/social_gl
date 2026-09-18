@@ -1,0 +1,24 @@
+# Supabase CLI local state (regenerated on `supabase link` / `supabase start`)
+supabase/.temp/
+
+# Windows/WSL "downloaded from the internet" marker files — these rode along
+# with files pulled from a browser and are pure noise in the repo
+**/*:Zone.Identifier
+**/*.Zone.Identifier
+
+# Local env / secrets — never commit real keys
+.env
+.env.local
+**/.env.local
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend has its own .gitignore, this is a backstop)
+node_modules/
+dist/
