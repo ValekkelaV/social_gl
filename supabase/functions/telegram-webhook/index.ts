@@ -55,12 +55,18 @@ serve(async (req: Request) => {
   // Подтверждаем, что запрос действительно от Telegram.
   const secretHeader = req.headers.get("X-Telegram-Bot-Api-Secret-Token");
 
-  // ВРЕМЕННЫЙ ДЕБАГ: печатаем точные значения (в кавычках JSON.stringify,
-  // чтобы видно было скрытые пробелы/переносы строк) — убрать после того,
-  // как разберёмся с несовпадением secret_token.
-  console.log("DEBUG secretHeader:", JSON.stringify(secretHeader));
-  console.log("DEBUG TELEGRAM_WEBHOOK_SECRET:", JSON.stringify(TELEGRAM_WEBHOOK_SECRET));
-
+  // Здесь был временный дебаг, печатавший secretHeader и TELEGRAM_WEBHOOK_SECRET
+  // через console.log — им разбирались с несовпадением secret_token при
+  // регистрации вебхука. Убран: секрет попадал в логи edge-функции, а функция
+  // задеплоена с --no-verify-jwt и вызывается кем угодно из интернета, так что
+  // знающий секрет мог прислать поддельный апдейт и получить session_hashed_token
+  // на чужой аккаунт из вайтлиста. Если понадобится отлаживать снова — сравните
+  // значения локально, а не через логи: печатать секрет в них больше не нужно.
+  //
+  // ВАЖНО при отладке: сравнивать надо РОВНО те значения, что переданы в
+  // setWebhook (secret_token) и в supabase secrets set (TELEGRAM_WEBHOOK_SECRET).
+  // Частая причина несовпадения — незаметный пробел или перенос строки при
+  // копировании, поэтому при разборе и стоит смотреть через JSON.stringify.
   if (secretHeader !== TELEGRAM_WEBHOOK_SECRET) {
     console.error("Неверный secret_token в заголовке вебхука");
     return new Response("unauthorized", { status: 401 });

@@ -40,6 +40,36 @@ if [[ $KEEP -eq 0 ]]; then
   psql_q <<'SQL' >/dev/null
 drop schema if exists public cascade;
 create schema public;
+
+-- ВАЖНО: восстановление дефолтных привилегий Supabase.
+--
+-- `drop schema ... cascade` уничтожает не только таблицы, но и запись
+-- pg_default_acl для схемы public — а именно она в Supabase раздаёт права
+-- ролям anon/authenticated/service_role на каждую новую таблицу. Без этого
+-- блока все созданные миграциями таблицы оказываются без грантов вообще:
+-- схема накатывается и линт проходит, но PostgREST отдаёт permission denied
+-- на любой запрос из приложения, потому что роль authenticated не имеет прав
+-- ни на одну таблицу. То есть локальная база выглядит рабочей, но приложение
+-- против неё мертво — и это ровно тот случай, когда проверка врёт в
+-- успокаивающую сторону.
+--
+-- На проде эти права есть (их выдают дефолтные привилегии Supabase при
+-- создании проекта), поэтому восстановление обязательно для того, чтобы
+-- локальный накат воспроизводил прод, а не свою собственную урезанную версию.
+-- Обнаружено сверкой с supabase/_pulled/remote_schema_20260918.sql: там
+-- гранты для anon/authenticated перечислены, а локально их не было.
+grant usage on schema public to postgres, anon, authenticated, service_role;
+grant all on all tables in schema public to postgres, anon, authenticated, service_role;
+grant all on all routines in schema public to postgres, anon, authenticated, service_role;
+grant all on all sequences in schema public to postgres, anon, authenticated, service_role;
+
+alter default privileges for role postgres in schema public
+  grant all on tables to postgres, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  grant all on routines to postgres, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  grant all on sequences to postgres, anon, authenticated, service_role;
+
 do $$
 declare p text;
 begin
@@ -92,6 +122,28 @@ if [[ $fail -eq 0 ]]; then
     select 'функций: ' || count(*) from information_schema.routines where routine_schema='public'
     union all
     select 'политик: ' || count(*) from pg_policies where schemaname='public'"
+
+  # Права для authenticated/anon — отдельная проверка, а не строка в списке
+  # выше. Без грантов схема накатывается и линт проходит, но приложение
+  # получает permission denied: молчаливо сломанное состояние, которое по
+  # одному количеству объектов не видно. Проверяем ровно то, от чего зависит
+  # работоспособность фронтенда.
+  #
+  # Именно эти две таблицы, а не telegram_login_tokens: на неё права намеренно
+  # отзываются (см. 24_*), поэтому как индикатор она не годится.
+  echo
+  if [[ "$(psql "$DB_URL" --no-psqlrc -At -c "
+        select has_table_privilege('authenticated', 'public.applications', 'select')
+           and has_table_privilege('authenticated', 'public.people', 'select')
+           and has_schema_privilege('anon', 'public', 'usage')")" == "t" ]]; then
+    echo "== права ролей: OK (гранты authenticated/anon на месте) =="
+  else
+    echo "== права ролей: ПРОБЛЕМА — у authenticated/anon нет грантов =="
+    echo "   Схема накатилась, но приложение против неё не заработает: PostgREST"
+    echo "   вернёт permission denied. Проверьте блок восстановления"
+    echo "   pg_default_acl в этом скрипте (после 'create schema public')."
+    fail=1
+  fi
 else
   echo "Накат ПРОВАЛЕН на файле выше."
 fi
