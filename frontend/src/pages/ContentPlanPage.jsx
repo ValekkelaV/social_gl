@@ -5,15 +5,23 @@ import { useAuth } from "../auth/AuthContext";
 
 // Контент-план: банк постов и подготовка публикаций.
 //
-// Ключевое отличие от «одного текста на пост»: текст живёт НЕ на посте, а на
-// варианте — по одному на площадку (content_post_variants, миграция 25).
-// Поэтому в карточке всегда два блока, Telegram и ВК, с разными текстами и
-// разными датами публикации: в тг есть разметка ссылок и свой эмодзи-пак,
-// в ВК ни того, ни другого, и выходят они не обязательно в один день.
+// Текстов в посте три вида, и путать их нельзя (миграция 29):
 //
-// Статус при этом ОДИН на материал (idea → draft → ready → scheduled →
-// published) — он про стадию работы, а не про то, куда уже ушло. Куда ушло,
-// видно по published_at у вариантов.
+//   1. Базовый текст поста (content_posts.body) — один на материал, уходит и в
+//      тг, и в ВК. Это то, что пишут в 90% случаев.
+//   2. Переопределение для площадки (content_post_variants.body) — нужно редко:
+//      когда тексты действительно расходятся. Разметка ссылок и эмодзи-пак
+//      сюда не относятся — в обычной textarea их всё равно не набрать, они
+//      делаются в редакторе самой площадки при публикации. Реальный повод
+//      разойтись — карточка-превью: в тг встроенная ссылка её отключает, в ВК
+//      встроить нельзя, поэтому карточка будет всегда.
+//   3. Текст карточки (content_post_media.card_text) — вшивается в картинку,
+//      поэтому он ОДИН на карточку, а не на площадку: картинка уходит в обе
+//      соцсети одна и та же. Обычно это короткая выжимка, не равная тексту
+//      поста, и синхронизировать их не нужно.
+//
+// Статус при этом один на материал (idea → draft → ready → scheduled →
+// published) — он про стадию работы, а не про то, куда уже ушло.
 
 const STATUS_LABELS = {
   idea: "Идея",
@@ -123,9 +131,10 @@ function PostsList() {
     return true;
   });
 
-  // Создание поста сразу заводит оба варианта — пустыми. Так «есть куда
-  // писать» с первой секунды, и карточка не зависит от того, выбрана ли уже
-  // площадка (в старом поле platform она как раз могла быть не выбрана).
+  // Создание поста сразу заводит оба варианта — без текста. Так «есть куда
+  // писать дату и ссылку на публикацию» с первой секунды, а текст при этом
+  // лежит один, общий (content_posts.body), и не надо решать на старте,
+  // чем площадки будут отличаться.
   async function handleCreate(e) {
     e.preventDefault();
     const title = newTitle.trim();
@@ -274,9 +283,18 @@ function PostDetail() {
   const [saved, setSaved] = useState(false);
 
   const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
   const [status, setStatus] = useState("idea");
-  // variants — словарь по площадке: { telegram: {...}, vk: {...} }
+
+  // variants — словарь по площадке: { telegram: {...}, vk: {...} }.
+  // overridden означает «у этой площадки свой текст», а не «текст непустой»:
+  // пустой текст — тоже осознанный выбор, он отличается от «не переопределён».
   const [variants, setVariants] = useState({});
+
+  // Карточки: тексты, которые уйдут в картинки. id есть у уже сохранённых;
+  // cards из базы (loadedCards) нужны, чтобы понять, какие строки удалили.
+  const [cards, setCards] = useState([]);
+  const [loadedCards, setLoadedCards] = useState({});
 
   useEffect(() => {
     let isMounted = true;
@@ -287,8 +305,9 @@ function PostDetail() {
       .from("content_posts")
       .select(
         `
-        id, title, status,
-        content_post_variants(platform, body, scheduled_at, published_at, published_url)
+        id, title, body, status,
+        content_post_variants(platform, body, scheduled_at, published_at, published_url),
+        content_post_media(id, card_text, url, sort_order)
       `
       )
       .eq("id", id)
@@ -302,12 +321,14 @@ function PostDetail() {
           setError("Пост не найден");
         } else {
           setTitle(data.title ?? "");
+          setBody(data.body ?? "");
           setStatus(data.status);
           setVariants(
             Object.fromEntries(
               (data.content_post_variants ?? []).map((v) => [
                 v.platform,
                 {
+                  overridden: v.body !== null,
                   body: v.body ?? "",
                   scheduled_at: v.scheduled_at,
                   published_at: v.published_at,
@@ -316,6 +337,14 @@ function PostDetail() {
               ])
             )
           );
+
+          // Порядок вложений задаёт sort_order; вложенный select порядок строк
+          // не гарантирует, поэтому сортируем здесь.
+          const media = [...(data.content_post_media ?? [])].sort(
+            (a, b) => a.sort_order - b.sort_order
+          );
+          setCards(media.map((m) => ({ id: m.id, url: m.url, card_text: m.card_text ?? "" })));
+          setLoadedCards(Object.fromEntries(media.map((m) => [m.id, m.card_text ?? ""])));
         }
         setLoading(false);
       });
@@ -331,6 +360,32 @@ function PostDetail() {
       ...prev,
       [platform]: { ...(prev[platform] ?? {}), [field]: value },
     }));
+  }
+
+  // Копирование текста поста в площадку по клику. Именно копия, а не связь:
+  // дальше они живут отдельно, потому что смысл переопределения — разойтись.
+  function toggleOverride(platform) {
+    const v = variants[platform] ?? {};
+    if (v.overridden) {
+      if (v.body && !window.confirm(
+        "Свой текст этой площадки будет удалён — уйдёт текст поста. Продолжить?"
+      )) {
+        return;
+      }
+      updateVariant(platform, "overridden", false);
+      updateVariant(platform, "body", "");
+    } else {
+      setSaved(false);
+      setVariants((prev) => ({
+        ...prev,
+        [platform]: { ...(prev[platform] ?? {}), overridden: true, body: body },
+      }));
+    }
+  }
+
+  function updateCard(index, value) {
+    setSaved(false);
+    setCards((prev) => prev.map((c, i) => (i === index ? { ...c, card_text: value } : c)));
   }
 
   async function handleSave(e) {
@@ -355,7 +410,15 @@ function PostDetail() {
 
     const { error: postError } = await supabase
       .from("content_posts")
-      .update({ title, status, scheduled_at: status === "scheduled" ? dates[0] : null })
+      .update({
+        title,
+        // Пустой текст пишем как NULL, а не как '': «текста нет» должно иметь
+        // одно представление в базе, иначе в истории ревизий появятся два
+        // разных «пусто» (см. комментарий к content_post_revisions.body).
+        body: body.trim() ? body : null,
+        status,
+        scheduled_at: status === "scheduled" ? dates[0] : null,
+      })
       .eq("id", id);
 
     if (postError) {
@@ -370,7 +433,7 @@ function PostDetail() {
       return {
         post_id: id,
         platform: p.key,
-        body: v.body ?? "",
+        body: v.overridden ? v.body ?? "" : null,
         scheduled_at: v.scheduled_at ?? null,
         published_at: v.published_at ?? null,
         published_url: (v.published_url ?? "").trim() || null,
@@ -383,9 +446,56 @@ function PostDetail() {
 
     if (variantsError) {
       console.error("Ошибка сохранения площадок:", variantsError);
-      setError("Пост сохранён, а тексты по площадкам — нет. Попробуйте ещё раз");
+      setError("Пост сохранён, а площадки — нет. Попробуйте ещё раз");
       setSaving(false);
       return;
+    }
+
+    // Карточки синхронизируем точечно: удаляем только те, что убрали в форме,
+    // и обновляем только изменившиеся. Пересоздавать все подряд нельзя —
+    // у сохранённой карточки есть url и uploaded_by, которые в форму не
+    // попадают и потерялись бы.
+    const keptIds = cards.filter((c) => c.id).map((c) => c.id);
+    const removedIds = Object.keys(loadedCards).filter((loadedId) => !keptIds.includes(loadedId));
+
+    if (removedIds.length) {
+      const { error: deleteError } = await supabase
+        .from("content_post_media")
+        .delete()
+        .in("id", removedIds);
+      if (deleteError) {
+        console.error("Ошибка удаления карточек:", deleteError);
+        setError("Не удалось удалить карточку");
+        setSaving(false);
+        return;
+      }
+    }
+
+    for (const [index, card] of cards.entries()) {
+      const value = card.card_text.trim() ? card.card_text : null;
+      if (card.id) {
+        if (loadedCards[card.id] === card.card_text) continue;
+        const { error: cardError } = await supabase
+          .from("content_post_media")
+          .update({ card_text: value, sort_order: index })
+          .eq("id", card.id);
+        if (cardError) {
+          console.error("Ошибка сохранения карточки:", cardError);
+          setError("Тексты карточек сохранены не полностью");
+          setSaving(false);
+          return;
+        }
+      } else {
+        const { error: cardError } = await supabase
+          .from("content_post_media")
+          .insert({ post_id: id, card_text: value, sort_order: index });
+        if (cardError) {
+          console.error("Ошибка создания карточки:", cardError);
+          setError("Тексты карточек сохранены не полностью");
+          setSaving(false);
+          return;
+        }
+      }
     }
 
     setSaving(false);
@@ -442,6 +552,25 @@ function PostDetail() {
           </p>
         </div>
 
+        <div className="border rounded p-4 space-y-2">
+          <h2 className="font-semibold text-sm">Текст поста</h2>
+          <textarea
+            value={body}
+            onChange={(e) => {
+              setSaved(false);
+              setBody(e.target.value);
+            }}
+            rows={10}
+            placeholder="Текст, который уходит и в Telegram, и в ВК"
+            className="w-full border rounded px-2 py-1.5 text-sm font-mono"
+          />
+          <p className="text-xs text-gray-500">
+            Один на обе площадки. Разметку ссылок и эмодзи-пак в нём всё равно не набрать —
+            это делается в редакторе самой площадки при публикации. Свой текст нужен площадке
+            только если тексты должны разойтись содержательно.
+          </p>
+        </div>
+
         {PLATFORMS.map((p) => {
           const v = variants[p.key] ?? {};
           return (
@@ -451,13 +580,27 @@ function PostDetail() {
                 {v.published_at && <span className="text-xs text-gray-500">опубликовано</span>}
               </div>
 
-              <textarea
-                value={v.body ?? ""}
-                onChange={(e) => updateVariant(p.key, "body", e.target.value)}
-                rows={10}
-                placeholder="Текст поста для этой площадки"
-                className="w-full border rounded px-2 py-1.5 text-sm font-mono"
-              />
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!v.overridden}
+                  onChange={() => toggleOverride(p.key)}
+                />
+                Свой текст для этой площадки
+                {!v.overridden && (
+                  <span className="text-xs text-gray-500">— уйдёт текст поста</span>
+                )}
+              </label>
+
+              {v.overridden && (
+                <textarea
+                  value={v.body ?? ""}
+                  onChange={(e) => updateVariant(p.key, "body", e.target.value)}
+                  rows={10}
+                  placeholder="Текст только для этой площадки"
+                  className="w-full border rounded px-2 py-1.5 text-sm font-mono"
+                />
+              )}
 
               <div className="flex flex-wrap gap-4 text-sm">
                 <label>
@@ -495,6 +638,70 @@ function PostDetail() {
             </div>
           );
         })}
+
+        <div className="border rounded p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-sm">Карточки</h2>
+            <button
+              type="button"
+              onClick={() => {
+                setSaved(false);
+                setCards((prev) => [...prev, { card_text: "" }]);
+              }}
+              className="px-2 py-1 border rounded text-sm"
+            >
+              + Добавить карточку
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-500">
+            Текст, который вшивается в картинку. Один на карточку, а не на площадку — картинка
+            уходит и в тг, и в ВК одна и та же. Обычно это короткая выжимка, а не копия текста
+            поста. Сам файл можно не прикладывать: сначала пишется текст, картинка появится
+            позже.
+          </p>
+
+          {cards.length === 0 && <p className="text-sm text-gray-500">Карточек нет.</p>}
+
+          {cards.map((card, index) => (
+            <div key={card.id ?? `new-${index}`} className="border rounded p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-500">Карточка {index + 1}</span>
+                <div className="flex items-center gap-3">
+                  {card.url ? (
+                    <a
+                      href={card.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-gray-600 underline"
+                    >
+                      файл приложен
+                    </a>
+                  ) : (
+                    <span className="text-xs text-gray-400">файла ещё нет</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSaved(false);
+                      setCards((prev) => prev.filter((_, i) => i !== index));
+                    }}
+                    className="text-xs text-gray-600"
+                  >
+                    Удалить
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={card.card_text ?? ""}
+                onChange={(e) => updateCard(index, e.target.value)}
+                rows={3}
+                placeholder="Текст, который будет на картинке"
+                className="w-full border rounded px-2 py-1.5 text-sm font-mono"
+              />
+            </div>
+          ))}
+        </div>
 
         <div className="flex items-center gap-3">
           <button
