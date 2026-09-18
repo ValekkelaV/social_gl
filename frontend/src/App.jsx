@@ -32,7 +32,7 @@ export default function App() {
             <Route path="/tickets/:id" element={<TicketDetailPage />} />
             <Route path="/content-plan/*" element={<ContentPlanPage />} />
             <Route path="/applications/*" element={<ApplicationsPage />} />
-            <Route path="/scheduling" element={<SchedulingPage />} />
+            <Route path="/scheduling/*" element={<SchedulingPage />} />
             <Route path="/documents" element={<DocumentsPage />} />
             <Route path="/committees" element={<CommitteesPage />} />
           </Route>
