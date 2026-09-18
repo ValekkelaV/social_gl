@@ -14,6 +14,7 @@ Supabase SQL Editor, а фронтенд жил отдельно; теперь �
 - **[docs/design/auth-telegram.md](docs/design/auth-telegram.md)** — вход через Telegram (deep-link + бот)
 - **[docs/design/decisions.md](docs/design/decisions.md)** — журнал решений и известных расхождений
 - **[docs/README.md](docs/README.md)** — индекс всей документации
+- **[plans/ROADMAP.md](plans/ROADMAP.md)** — план проекта: этапы, что сделано в схеме и в UI, что осталось
 
 ## Структура
 

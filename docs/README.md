@@ -53,4 +53,5 @@
 | Как устроены права доступа | [design/rls-model.md](design/rls-model.md) |
 | Почему миграции не в `supabase/migrations/` | [design/decisions.md](design/decisions.md) |
 | Как это вообще работает у докладчиков | [design/auth-telegram.md](design/auth-telegram.md) |
-| Что ещё не доделано | [design/decisions.md](design/decisions.md), часть 3 |
+| Что делаем дальше и в каком порядке | [../plans/ROADMAP.md](../plans/ROADMAP.md) |
+| Что ещё не доделано | [../plans/ROADMAP.md](../plans/ROADMAP.md) — по этапам; [design/decisions.md](design/decisions.md), часть 3 — по технической части |
