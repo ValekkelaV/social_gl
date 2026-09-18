@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Route, Routes } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../auth/AuthContext";
-import ScheduleSetupPage from "./ScheduleSetupPage";
+import ScheduleSetupPage, { PLENARY_FORMAT_LABEL, SLOT_KIND_LABEL } from "./ScheduleSetupPage";
 
 // ============================================================
 // РАЗДЕЛ «СЕКЦИИ И РАСПИСАНИЕ»
@@ -63,6 +63,10 @@ function ScheduleBoard() {
   const [applications, setApplications] = useState([]);
   const [displayIds, setDisplayIds] = useState({});
   const [warnings, setWarnings] = useState({});
+  // Пленарная часть — только для показа в дне (см. load), редактируется в
+  // настройке.
+  const [plenaryItems, setPlenaryItems] = useState([]);
+  const [plenaryParticipants, setPlenaryParticipants] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -90,10 +94,13 @@ function ScheduleBoard() {
     if (!silent) setLoading(true);
     setError("");
 
-    const [daysRes, slotsRes, sectionsRes, sectionSlotsRes, numbersRes, expertsRes, assignmentsRes, appsRes, idsRes, warnRes] =
+    const [daysRes, slotsRes, sectionsRes, sectionSlotsRes, numbersRes, expertsRes, assignmentsRes, appsRes, idsRes, warnRes, plenaryRes, participantsRes] =
       await Promise.all([
         supabase.from("conference_days").select("id, day_date, label, sort_order").order("sort_order"),
-        supabase.from("time_slots").select("id, day_id, sort_order, label, starts_at, ends_at").order("sort_order"),
+        supabase
+          .from("time_slots")
+          .select("id, day_id, sort_order, label, starts_at, ends_at, kind")
+          .order("sort_order"),
         // Именно таблица sections, а не вывод из section_slots: секцию, убранную
         // из всех слотов, в section_slots уже не видно, а строка в sections
         // остаётся. Без этого списка повторное «А» завело бы вторую такую же.
@@ -115,6 +122,24 @@ function ScheduleBoard() {
           .select("id, title, proposed_topic, status, desired_section, speakers(full_name, sort_order)"),
         supabase.from("talk_display_ids").select("talk_assignment_id, display_id"),
         supabase.from("slot_capacity_warnings").select("section_slot_id, talks_count"),
+        // Пленарная часть — только для показа: доска про доклады, а лекции и
+        // круглые столы заполняются в настройке. Но видеть их в дне надо —
+        // иначе день на доске выглядит короче, чем он есть.
+        //
+        // `!имя_ключа` здесь обязательно, а не для красоты. Участники круглого
+        // стола (plenary_participants) сделали plenary_items и external_experts
+        // связанными двумя путями — напрямую и через таблицу-связку, — и без
+        // подсказки PostgREST отвечает PGRST201 «more than one relationship was
+        // found», роняя весь load() доски. Имена ключей заданы в 33 явно ровно
+        // затем, чтобы их можно было написать здесь.
+        supabase
+          .from("plenary_items")
+          .select(
+            "id, slot_id, format, title, description, moderator_person_id, moderator_expert_id, " +
+              "people!plenary_items_moderator_person_fk(id, full_name), " +
+              "external_experts!plenary_items_moderator_expert_fk(id, full_name)"
+          ),
+        supabase.from("plenary_participants").select("plenary_item_id, expert_id, sort_order"),
       ]);
 
     const failed = [
@@ -128,6 +153,8 @@ function ScheduleBoard() {
       appsRes,
       idsRes,
       warnRes,
+      plenaryRes,
+      participantsRes,
     ].find((r) => r.error);
 
     if (failed) {
@@ -145,6 +172,8 @@ function ScheduleBoard() {
     setExperts(expertsRes.data ?? []);
     setAssignments(assignmentsRes.data ?? []);
     setApplications(appsRes.data ?? []);
+    setPlenaryItems(plenaryRes.data ?? []);
+    setPlenaryParticipants(participantsRes.data ?? []);
 
     const idMap = {};
     (idsRes.data ?? []).forEach((r) => (idMap[r.talk_assignment_id] = r.display_id));
@@ -187,6 +216,26 @@ function ScheduleBoard() {
     dayNumbers.forEach((n) => map.set(`${n.section_id}:${n.day_id}`, n.section_number));
     return map;
   }, [dayNumbers]);
+
+  // Пленарная часть по слоту: элемент в слоте ровно один (unique (slot_id)),
+  // поэтому карта, а не список.
+  const plenaryBySlot = useMemo(() => {
+    const map = new Map();
+    plenaryItems.forEach((it) => map.set(it.slot_id, it));
+    return map;
+  }, [plenaryItems]);
+
+  const participantsByItem = useMemo(() => {
+    const map = new Map();
+    plenaryParticipants.forEach((p) => {
+      if (!map.has(p.plenary_item_id)) map.set(p.plenary_item_id, []);
+      map.get(p.plenary_item_id).push(p);
+    });
+    map.forEach((list) => list.sort((a, b) => a.sort_order - b.sort_order));
+    return map;
+  }, [plenaryParticipants]);
+
+  const expertNameById = useMemo(() => new Map(experts.map((e) => [e.id, e.full_name])), [experts]);
 
   const talksByCell = useMemo(() => {
     const map = new Map();
@@ -693,6 +742,11 @@ function ScheduleBoard() {
                   <div key={slot.id} className="border rounded">
                     <div className="px-3 py-2 border-b bg-gray-50 text-sm font-semibold">
                       {slot.label || `Слот ${slot.sort_order}`}
+                      {slot.kind !== "talk" && (
+                        <span className="ml-2 rounded px-1.5 py-0.5 text-xs font-normal bg-gray-200 text-gray-600">
+                          {SLOT_KIND_LABEL[slot.kind] ?? slot.kind}
+                        </span>
+                      )}
                       {slot.starts_at && (
                         <span className="text-gray-500 font-normal">
                           {" "}
@@ -702,48 +756,135 @@ function ScheduleBoard() {
                       )}
                     </div>
 
-                    <div className="flex gap-3 p-3 items-start overflow-x-auto">
-                      {columns.map((ss) => (
-                        <SectionColumn
-                          key={ss.id}
-                          sectionSlot={ss}
-                          sectionNumber={numberBySectionDay.get(`${ss.section_id}:${activeDayId}`)}
-                          talks={talksByCell.get(ss.id) ?? []}
-                          displayIds={displayIds}
-                          warningCount={warnings[ss.id]}
-                          experts={experts}
-                          canEditSchedule={canEditSchedule}
-                          canEditModerators={canEditModerators}
-                          dragOver={dragOver}
-                          setDragOver={setDragOver}
-                          dragged={dragged}
-                          onDragStart={onDragStart}
-                          onDragEnd={onDragEnd}
-                          onDropTalk={applyMove}
-                          onSaveRoom={saveRoom}
-                          onSaveModerator={saveModerator}
-                          onRemove={removeSectionFromSlot}
-                          onDuplicate={() => duplicateToOtherSlots(ss.section_id, ss.slot_id)}
-                          hasOtherSlots={activeDaySlots.some(
-                            (s) => s.id !== ss.slot_id && !sectionSlots.some((x) => x.section_id === ss.section_id && x.slot_id === s.id)
-                          )}
-                        />
-                      ))}
+                    {/* Докладной слот рисуется сеткой колонок; пленарный и
+                        служебный — карточкой. Обработчиков dragover здесь нет
+                        намеренно, и это не упущение: без preventDefault браузер
+                        сам отказывается принимать сброс, поэтому доклад в
+                        пленарный слот не встанет и «починить» это, добавив
+                        обработчик, нельзя — сломается ровно то, что нужно. */}
+                    {slot.kind === "talk" ? (
+                      <div className="flex gap-3 p-3 items-start overflow-x-auto">
+                        {columns.map((ss) => (
+                          <SectionColumn
+                            key={ss.id}
+                            sectionSlot={ss}
+                            sectionNumber={numberBySectionDay.get(`${ss.section_id}:${activeDayId}`)}
+                            talks={talksByCell.get(ss.id) ?? []}
+                            displayIds={displayIds}
+                            warningCount={warnings[ss.id]}
+                            experts={experts}
+                            canEditSchedule={canEditSchedule}
+                            canEditModerators={canEditModerators}
+                            dragOver={dragOver}
+                            setDragOver={setDragOver}
+                            dragged={dragged}
+                            onDragStart={onDragStart}
+                            onDragEnd={onDragEnd}
+                            onDropTalk={applyMove}
+                            onSaveRoom={saveRoom}
+                            onSaveModerator={saveModerator}
+                            onRemove={removeSectionFromSlot}
+                            onDuplicate={() => duplicateToOtherSlots(ss.section_id, ss.slot_id)}
+                            hasOtherSlots={activeDaySlots.some(
+                              (s) => s.id !== ss.slot_id && !sectionSlots.some((x) => x.section_id === ss.section_id && x.slot_id === s.id)
+                            )}
+                          />
+                        ))}
 
-                      {canEditSchedule && (
-                        <NewSection
-                          nextNumber={nextNumberForDay}
-                          existingSections={sectionsNotInThisSlot}
-                          onCreate={(target, number) => createSection(slot.id, target, number)}
-                        />
-                      )}
-                    </div>
+                        {canEditSchedule && (
+                          <NewSection
+                            nextNumber={nextNumberForDay}
+                            existingSections={sectionsNotInThisSlot}
+                            onCreate={(target, number) => createSection(slot.id, target, number)}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <SlotContent
+                        slot={slot}
+                        item={plenaryBySlot.get(slot.id) ?? null}
+                        participants={participantsByItem.get(slot.id) ?? []}
+                        expertNameById={expertNameById}
+                      />
+                    )}
                   </div>
                 );
               })}
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// НЕ-ДОКЛАДНОЙ СЛОТ: ПЛЕНАРНЫЙ И СЛУЖЕБНЫЙ
+// ============================================================
+// Только показ. Заполняется в настройке (/scheduling/setup), и это не
+// случайность: доска — про распределение докладов, а лекцию выбирают из
+// справочников, которые живут рядом с формами. Тащить сюда ещё и правку
+// модераторов значило бы держать в разделе два независимых способа делать одно
+// и то же.
+//
+// Служебный слот рисуется одной строкой намеренно: у него нет ни модераторов,
+// ни экспертов, и любая форма здесь была бы пустой. Его содержание — подпись
+// слота в шапке («Кофебрейк»), а не скрытое поле.
+
+function SlotContent({ slot, item, participants, expertNameById }) {
+  if (slot.kind === "service") {
+    return (
+      <div className="px-3 py-2 text-sm text-gray-500">
+        Служебная часть: ни модераторов, ни экспертов. Содержание — подпись слота.
+      </div>
+    );
+  }
+
+  if (!item) {
+    return (
+      <div className="px-3 py-2 text-sm text-gray-500">
+        Пленарное событие ещё не заведено —{" "}
+        <Link to="/scheduling/setup" className="underline">
+          заполнить
+        </Link>
+        .
+      </div>
+    );
+  }
+
+  // Модератор — из оргкомитета ИЛИ из внешних экспертов (ровно один, следит
+  // БД). Оба вложенных объекта приходят как объекты, а не массивы: здесь
+  // связь «многие к одному», и PostgREST отдаёт её объектом.
+  const moderator = item.people?.full_name ?? item.external_experts?.full_name ?? null;
+  const moderatorFrom = item.people ? "оргкомитет" : item.external_experts ? "внешний эксперт" : null;
+
+  return (
+    <div className="px-3 py-2 space-y-1 text-sm">
+      <div>
+        <span className="text-gray-500">{PLENARY_FORMAT_LABEL[item.format] ?? item.format}: </span>
+        <span className="font-medium">{item.title}</span>
+      </div>
+
+      {item.description && <div className="text-gray-600">{item.description}</div>}
+
+      <div className="text-gray-600">
+        Модератор:{" "}
+        {moderator ? (
+          <>
+            {moderator} <span className="text-gray-400">({moderatorFrom})</span>
+          </>
+        ) : (
+          <span className="text-gray-400">не назначен</span>
+        )}
+      </div>
+
+      {participants.length > 0 && (
+        <div className="text-gray-600">
+          Участники:{" "}
+          {participants
+            .map((p) => expertNameById.get(p.expert_id) ?? "— эксперт удалён —")
+            .join("; ")}
+        </div>
       )}
     </div>
   );
