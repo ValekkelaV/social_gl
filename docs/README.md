@@ -8,7 +8,7 @@
 
 | Документ | О чём |
 |---|---|
-| [schema-overview.md](design/schema-overview.md) | Все 30 таблиц по пяти блокам: что где лежит и зачем |
+| [schema-overview.md](design/schema-overview.md) | Все 31 таблицу по пяти блокам: что где лежит и зачем |
 | [rls-model.md](design/rls-model.md) | Модель прав: комитеты, три уровня доступа, и две реальные ловушки Postgres, на которых уже спотыкались |
 | [auth-telegram.md](design/auth-telegram.md) | Вход через Telegram: deep-link + бот-вебхук, вайтлист, деплой |
 | [decisions.md](design/decisions.md) | **Журнал решений и расхождений с продом.** Читать перед тем, как что-то «чинить» |
