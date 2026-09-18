@@ -55,6 +55,7 @@ function ScheduleBoard() {
 
   const [days, setDays] = useState([]);
   const [slots, setSlots] = useState([]);
+  const [sections, setSections] = useState([]);
   const [sectionSlots, setSectionSlots] = useState([]);
   const [dayNumbers, setDayNumbers] = useState([]);
   const [experts, setExperts] = useState([]);
@@ -89,10 +90,14 @@ function ScheduleBoard() {
     if (!silent) setLoading(true);
     setError("");
 
-    const [daysRes, slotsRes, sectionSlotsRes, numbersRes, expertsRes, assignmentsRes, appsRes, idsRes, warnRes] =
+    const [daysRes, slotsRes, sectionsRes, sectionSlotsRes, numbersRes, expertsRes, assignmentsRes, appsRes, idsRes, warnRes] =
       await Promise.all([
         supabase.from("conference_days").select("id, day_date, label, sort_order").order("sort_order"),
         supabase.from("time_slots").select("id, day_id, sort_order, label, starts_at, ends_at").order("sort_order"),
+        // Именно таблица sections, а не вывод из section_slots: секцию, убранную
+        // из всех слотов, в section_slots уже не видно, а строка в sections
+        // остаётся. Без этого списка повторное «А» завело бы вторую такую же.
+        supabase.from("sections").select("id, name").order("name"),
         supabase
           .from("section_slots")
           .select(
@@ -115,6 +120,7 @@ function ScheduleBoard() {
     const failed = [
       daysRes,
       slotsRes,
+      sectionsRes,
       sectionSlotsRes,
       numbersRes,
       expertsRes,
@@ -133,6 +139,7 @@ function ScheduleBoard() {
 
     setDays(daysRes.data ?? []);
     setSlots(slotsRes.data ?? []);
+    setSections(sectionsRes.data ?? []);
     setSectionSlots(sectionSlotsRes.data ?? []);
     setDayNumbers(numbersRes.data ?? []);
     setExperts(expertsRes.data ?? []);
@@ -222,6 +229,19 @@ function ScheduleBoard() {
     );
     return map;
   }, [sectionSlots, numberBySectionDay, activeDayId]);
+
+  const sectionsSorted = useMemo(
+    () => [...sections].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", "ru")),
+    [sections]
+  );
+
+  // Следующий свободный номер в дне. Номер произвольный, но на практике
+  // секции нумеруются подряд, и заставлять человека каждый раз считать
+  // максимум глазами — работа на ровном месте.
+  const nextNumberForDay = useMemo(() => {
+    const used = dayNumbers.filter((n) => n.day_id === activeDayId).map((n) => n.section_number);
+    return used.length ? Math.max(...used) + 1 : 1;
+  }, [dayNumbers, activeDayId]);
 
   const pool = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -359,51 +379,90 @@ function ScheduleBoard() {
   // ПРАВКИ СЕКЦИЙ, АУДИТОРИЙ, МОДЕРАТОРОВ
   // ============================================================
 
-  async function createSection(slotId, name, number) {
+  // Секция заводится один раз, а в слоты ставится много раз: А, Б, В идут все
+  // три слота дня. Поэтому «выбрать существующую» — не удобство, а
+  // единственный способ не наплодить вторых «А»: имя в схеме не уникально, и
+  // поймать дубль было бы нечем — для talk_display_ids это были бы разные
+  // секции с одним названием.
+  async function createSection(slotId, target, number) {
     setBusy(true);
     setError("");
 
-    const { data: section, error: sectionError } = await supabase
-      .from("sections")
-      .insert({ name: name.trim() })
+    let sectionId = target.sectionId ?? null;
+    let createdNow = false;
+
+    if (!sectionId) {
+      const { data: section, error: sectionError } = await supabase
+        .from("sections")
+        .insert({ name: target.name })
+        .select("id")
+        .single();
+
+      if (sectionError) {
+        console.error(sectionError);
+        setError("Не удалось создать секцию");
+        setBusy(false);
+        return;
+      }
+      sectionId = section.id;
+      createdNow = true;
+    }
+
+    // Вставка отбивается на unique (section_id, slot_id) — и это к лучшему:
+    // колонка-дубль в слоте не появится молча. Штатно сюда не попасть, список
+    // в форме уже отфильтрован; это на случай устаревшего списка.
+    const { data: cell, error: slotError } = await supabase
+      .from("section_slots")
+      .insert({ section_id: sectionId, slot_id: slotId })
       .select("id")
       .single();
 
-    if (sectionError) {
-      console.error(sectionError);
-      setError("Не удалось создать секцию");
-      setBusy(false);
-      return;
-    }
-
-    const { error: slotError } = await supabase
-      .from("section_slots")
-      .insert({ section_id: section.id, slot_id: slotId });
-
     if (slotError) {
       console.error(slotError);
-      setError("Не удалось поставить секцию в слот");
+      if (createdNow) await supabase.from("sections").delete().eq("id", sectionId);
+      setError(
+        slotError.code === "23505"
+          ? "Эта секция уже стоит в этом слоте"
+          : "Не удалось поставить секцию в слот"
+      );
       setBusy(false);
       return;
     }
 
-    // Номер секции уникален в рамках дня, поэтому вставка может отбиться — и
-    // это единственный шаг, который может отбиться уже после того, как секция
-    // создана. Убираем огрызок: секция без номера в дне не сломала бы ничего
-    // (в talk_display_ids такой доклад виден как display_id = NULL), но
-    // оставлять её в списке — мусор, который никто не поймёт.
-    const { error: numberError } = await supabase.from("section_day_numbers").insert({
-      section_id: section.id,
-      day_id: activeDayId,
-      section_number: number,
-    });
+    // Номер спрашиваем, только когда его у секции в этом дне ещё нет: если он
+    // есть, вставка упёрлась бы в первичный ключ (section_id, day_id), а менять
+    // уже проставленный номер никто не просил.
+    if (number != null) {
+      const { error: numberError } = await supabase.from("section_day_numbers").insert({
+        section_id: sectionId,
+        day_id: activeDayId,
+        section_number: number,
+      });
 
-    if (numberError) {
-      console.error(numberError);
-      await supabase.from("sections").delete().eq("id", section.id);
-      setError(`Номер ${number} в этом дне уже занят`);
-      setBusy(false);
-      return;
+      if (numberError) {
+        console.error(numberError);
+        // Откат: колонка без номера в дне ничего не ломает (в talk_display_ids
+        // такой доклад виден как display_id = null), но остаётся в списке
+        // мусором, про который никто не поймёт, откуда он. Секцию удаляем
+        // только если завели её здесь же — иначе снесём чужую вместе со всеми
+        // её слотами.
+        if (createdNow) await supabase.from("sections").delete().eq("id", sectionId);
+        else await supabase.from("section_slots").delete().eq("id", cell.id);
+
+        // Причину выясняем у базы, а не угадываем: у section_day_numbers два
+        // ограничения — PK (section_id, day_id) и unique (day_id,
+        // section_number), — и по коду ошибки 23505 их не различить.
+        const { data: taken } = await supabase
+          .from("section_day_numbers")
+          .select("section_id")
+          .eq("day_id", activeDayId)
+          .eq("section_number", number)
+          .maybeSingle();
+
+        setError(taken ? `Номер ${number} в этом дне уже занят` : "У секции уже есть номер в этом дне");
+        setBusy(false);
+        return;
+      }
     }
 
     setBusy(false);
@@ -619,6 +678,17 @@ function ScheduleBoard() {
 
               {activeDaySlots.map((slot) => {
                 const columns = columnsBySlot.get(slot.id) ?? [];
+                // Секции, которых в этом слоте ещё нет — их и предлагаем
+                // поставить. Те, что уже стоят здесь, из списка убираем: их
+                // вставка упёрлась бы в unique (section_id, slot_id) и отдала
+                // бы ошибку на ровном месте.
+                const sectionsNotInThisSlot = sectionsSorted
+                  .filter((s) => !columns.some((ss) => ss.section_id === s.id))
+                  .map((s) => ({
+                    id: s.id,
+                    name: s.name,
+                    numberInDay: numberBySectionDay.get(`${s.id}:${activeDayId}`) ?? null,
+                  }));
                 return (
                   <div key={slot.id} className="border rounded">
                     <div className="px-3 py-2 border-b bg-gray-50 text-sm font-semibold">
@@ -660,7 +730,13 @@ function ScheduleBoard() {
                         />
                       ))}
 
-                      {canEditSchedule && <NewSection onCreate={(name, number) => createSection(slot.id, name, number)} />}
+                      {canEditSchedule && (
+                        <NewSection
+                          nextNumber={nextNumberForDay}
+                          existingSections={sectionsNotInThisSlot}
+                          onCreate={(target, number) => createSection(slot.id, target, number)}
+                        />
+                      )}
                     </div>
                   </div>
                 );
@@ -749,7 +825,16 @@ function SectionColumn({
                   +слоты
                 </button>
               )}
-              <button onClick={onRemove} title="Убрать из слота" className="text-xs text-gray-500 hover:text-red-600">
+              {/* Стрелку отсюда убирать нельзя. onClick={onRemove} передал бы в
+                  removeSectionFromSlot событие клика первым аргументом, а та
+                  читает у своего аргумента .id — у события его нет, вышло бы
+                  undefined. Удаление ушло бы в никуда (id=eq.undefined), а
+                  колонка осталась бы на месте. */}
+              <button
+                onClick={() => onRemove(sectionSlot)}
+                title="Убрать из слота"
+                className="text-xs text-gray-500 hover:text-red-600"
+              >
                 ×
               </button>
             </div>
@@ -843,18 +928,43 @@ function SectionColumn({
 // СОЗДАНИЕ СЕКЦИИ ПРЯМО В СЛОТЕ
 // ============================================================
 // Отдельного экрана «создать секцию» нет намеренно: секция рождается в момент,
-// когда доклады впервые складывают в неё, и номер в дне осмысленен только
-// вместе со слотом, куда её ставят.
+// когда её впервые ставят в слот, и номер в дне осмысленен только вместе со
+// слотом, куда её ставят.
+//
+// В форме два пути: завести новую секцию или выбрать уже заведённую. Второй
+// нужен не для удобства, а чтобы не наплодить дублей: А идёт все три слота дня,
+// и завести её надо один раз, а поставить — трижды. Если бы каждая постановка
+// создавала новую строку в sections, в базе лежали бы три разных «А» с одним
+// именем (уникальности по имени нет), и talk_display_ids считал бы их разными
+// секциями.
+//
+// Номер спрашиваем только тогда, когда его у секции в этом дне ещё нет. Номер
+// сквозной в рамках дня, поэтому у «А», уже стоящей в первом слоте, во втором
+// слоте он тот же — и второй раз его вводить не надо.
 
-function NewSection({ onCreate }) {
+function NewSection({ nextNumber, existingSections, onCreate }) {
   const [open, setOpen] = useState(false);
+  const [sectionId, setSectionId] = useState("");
   const [name, setName] = useState("");
   const [number, setNumber] = useState("");
+
+  const picked = existingSections.find((s) => s.id === sectionId) ?? null;
+  const needsNumber = !picked || picked.numberInDay == null;
+
+  function reset() {
+    setSectionId("");
+    setName("");
+    setNumber("");
+    setOpen(false);
+  }
 
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setNumber(String(nextNumber));
+          setOpen(true);
+        }}
         className="w-40 shrink-0 border border-dashed rounded px-3 py-2 text-sm text-gray-500 hover:bg-gray-50"
       >
         + секция
@@ -867,33 +977,60 @@ function NewSection({ onCreate }) {
       onSubmit={(e) => {
         e.preventDefault();
         const n = Number(number);
-        if (!name.trim() || !Number.isInteger(n) || n < 1) return;
-        onCreate(name, n);
-        setName("");
-        setNumber("");
-        setOpen(false);
+        if (!picked && !name.trim()) return;
+        if (needsNumber && (!Number.isInteger(n) || n < 1)) return;
+        onCreate(picked ? { sectionId: picked.id } : { name: name.trim() }, needsNumber ? n : null);
+        reset();
       }}
       className="w-64 shrink-0 border rounded p-2 space-y-1"
     >
-      <input
+      <select
         autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="название секции"
+        value={sectionId}
+        onChange={(e) => {
+          setSectionId(e.target.value);
+          const next = existingSections.find((s) => s.id === e.target.value);
+          // У выбранной секции номер в этом дне либо уже есть — тогда не
+          // спрашиваем, — либо нет, и предлагаем следующий свободный.
+          setNumber(next?.numberInDay != null ? "" : String(nextNumber));
+        }}
         className="w-full border rounded p-1.5 text-sm"
-      />
-      <input
-        value={number}
-        onChange={(e) => setNumber(e.target.value)}
-        placeholder="номер в дне"
-        inputMode="numeric"
-        className="w-full border rounded p-1.5 text-sm"
-      />
+      >
+        <option value="">— новая секция —</option>
+        {existingSections.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+            {s.numberInDay != null ? ` (№${s.numberInDay} в этом дне)` : ""}
+          </option>
+        ))}
+      </select>
+
+      {!picked && (
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="название секции"
+          className="w-full border rounded p-1.5 text-sm"
+        />
+      )}
+
+      {needsNumber ? (
+        <input
+          value={number}
+          onChange={(e) => setNumber(e.target.value)}
+          placeholder="номер в дне"
+          inputMode="numeric"
+          className="w-full border rounded p-1.5 text-sm"
+        />
+      ) : (
+        <p className="text-xs text-gray-500">номер в этом дне уже проставлен: {picked.numberInDay}</p>
+      )}
+
       <div className="flex gap-2">
         <button type="submit" className="px-2 py-1 border rounded text-sm font-semibold">
-          Создать
+          {picked ? "Поставить" : "Создать"}
         </button>
-        <button type="button" onClick={() => setOpen(false)} className="px-2 py-1 text-sm text-gray-500">
+        <button type="button" onClick={reset} className="px-2 py-1 text-sm text-gray-500">
           Отмена
         </button>
       </div>
